@@ -1,4 +1,5 @@
 library(plyr)
+library(gtools)
 library(ggplot2)
 library(reshape2)
 library(plyr)
@@ -11,22 +12,18 @@ myrnorm = function(mean, sd, n) {
 
 ######################################
 # lets model some dose-response data #
-sample.4LP = function(A,B,C,D,e, rp = c(0.5, 0.75, 1.25, 1.5)) {
+sample.4LP = function(A,B,C,D,e, rp = 1) {
   # concentration params
-  doses = 150 / (10^(0:9))
+  z = 150 / (2^(0:9)) # doses
   # samples from each dose
   rep = 3
   # samples
-  sample.rp = c(1, rp)
-  # and concentracion point labels
-  dose.labels = paste('c', c(1:10), sep='')
-  dose.labels = as.vector(sapply(dose.labels, function (x) rep(x,rep)))
-  # concentration
-  y = D + ((A-D)/(1+(C*doses%*%t(sample.rp)/C)^B))
-  data = apply(y, 2, sapply, myrnorm, sd=e, n=rep)
-  colnames(data) = sample.rp
-  data = data.frame(dose = dose.labels, data)
-  data
+  y = D + (D-A)/(1+(z/C)^B)
+  data = sapply(y, myrnorm, sd=e, n=rep)
+  colnames(data) = z
+  melt.df = melt(data)[,2:3]
+  colnames(melt.df) = c("dose", "responce")
+  melt.df
 }
 
 dose.mean = function(melt.df) {
@@ -41,16 +38,16 @@ dose.sd = function(melt.df) {
   splitted <- ddply(melt.df, .(dose, variable), summarise, sd = round(sd(value), 2))
   sd = dcast(splitted, dose ~ variable, value.var="sd")
   sd
-}
+} 
 
 # model params for 4LP from 'Two Approaches to Potency Bioassay Analysis' Harry Yang, Ph.D
-A = 73454
-B = 1.36
-Cref = 7.98
-D = 415000
+B = 1.36 # slope parameter
+A = 73454 # lower asymptotes
+D = 415000 # upper asymptotes
+C = 7.98 # EC50
 e = 6000 # TODO: reference SD = 2 * test SD
 
-data = sample.4LP(A,B,Cref,D,e)
-melt.df <- melt(data, id.var = "dose")
-data.mean = dose.mean(melt.df)
-data.sd = dose.sd(melt.df)
+data = sample.4LP(A,B,C,D,e)
+
+model = drm(responce~dose, data = data, fct = LL.4(names=c("Slope","Lower Limit","Upper Limit", "ED50")))
+plot(model)
