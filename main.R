@@ -15,7 +15,8 @@ myrnorm = function(mean, sd, n) {
 
 sample.4LP = function(B, A, D, C, e, rp = 1, rep=3) {
   # concentration params
-  z = 150 / (2^(0:9)) # doses
+  #z = 150 / (2^(0:9)) # doses
+  z = c(100, 5, 2, 1, 0.5 , 0.25 , 0.1 , 0.05, 0.01, 0.001)
   # samples
   y = D + (A-D)/(1+(rp*z/C)^B)
   data = sapply(y, myrnorm, sd=e, n=rep)
@@ -41,13 +42,19 @@ dose.sd = function(melt.df) {
 } 
 
 # model params for 4LP from 'Two Approaches to Potency Bioassay Analysis' Harry Yang, Ph.D
-B = 1.36 # slope parameter
-D = 6.42 # lower asymptotes
-A = 9.19 # upper asymptotes
-C = 7.98 # EC50
-e = 0.05 # TODO: reference SD = 2 * test SD
+# B - slope parameter
+# D - lower asymptotes
+# A - upper asymptotes
+# C - EC50
+# error TODO: reference SD = 2 * test SD
 
-data = sample.4LP(B, A, D, C, e, rp, rep)
+A = 43535
+B = 1.024
+C = 0.61946
+D = 22671
+e = 967.19
+
+data = sample.4LP(B, A, D, C, e)
 
 model = drm(responce~dose, data = data, fct = LL.4(names=c("Slope","Lower Limit","Upper Limit", "ED50")))
 plot(model)
