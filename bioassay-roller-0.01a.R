@@ -6,8 +6,52 @@ library(sets)
 library(scales)
 library(grid)
 
+split.monkey.data = function(md) {
+  buf = read.table(textConnection(md), sep=';', skip=1)
+  dose=as.numeric(buf[1,-1])
+  buf = buf[-1,]
+  buf[,1] = as.factor(buf[,1])
+  df.split = dlply(buf, 1)
+  df.split = lapply(df.split, function(x) {
+    x[,1] <- NULL
+    x  
+  })
+  # REMOVE TO FIX MULTIPLE SAMPLES
+  #################################
+  names(df.split) = c('ref','test')
+  #################################
+  df.split = lapply(df.split, function(x) {
+    smp = data.frame(t(rbind(dose, x)))
+    colnames(smp) = c('dose', paste('x', c(1:nrow(x)), sep=''))
+    rownames(smp) = NULL
+    smp
+  })
+  res = df.split
+  attr(res, 'name') <- strsplit(md[1], ";")[[1]][2]  # save the name
+  res
+}
+
+load.parsed = function(file) {
+  x = readLines(file(file))
+  closeAllConnections()
+  start = grep("^sample;(.+\\.\\w+)$", x)
+  mark = vector('integer', length(x))
+  mark[start] = 1
+  # determine limits of each table
+  mark = cumsum(mark)
+  # split the data for reading
+  df = lapply(split(x, mark), split.monkey.data)
+  # rename the list
+  names(df) = sapply(df, attr, 'name')
+  df = lapply(df, function(x) {
+    attr(x, "name") = NULL
+    x
+  })
+  df
+}
+
 load.raw = function(file) {
-  data = read.table(
+  data = read.csv(
     file=file,
     sep=';',
     header=F,
@@ -76,9 +120,9 @@ f.parallel.test = function(model.set) {
   f = ((SRSS-RSS)/(SDF-DF))/(RSS/DF)
   p = pf(f, SDF-DF,DF)
   if(p>0.95)
-    'FAIL'
+    paste('FAIL', 'p-value', round(p, 2), sep='\t')
   else
-    'PASS'
+    paste('PASS', 'p-value', round(p, 2), sep='\t')
 }
 
 eq.parallel.test = function(model.set) {
@@ -99,14 +143,14 @@ eq.parallel.test = function(model.set) {
     'FAIL'
 }
 
-point.stat.table = function(dose, df.list) {
-  ref.point.mean = lapply(df.list, function(x) apply(x$ref[,2:4], 1, mean))
-  ref.point.sd = lapply(df.list, function(x) apply(x$ref[,2:4], 1, sd))
-  test.point.mean = lapply(df.list, function(x) apply(x$test[,2:4], 1, mean))
-  test.point.sd = lapply(df.list, function(x) apply(x$test[,2:4], 1, sd))
+point.stat.table = function(df.list) {
+  ref.point.mean = lapply(df.list, function(x) apply(x$ref[,-1], 1, mean))
+  ref.point.sd = lapply(df.list, function(x) apply(x$ref[,-1], 1, sd))
+  test.point.mean = lapply(df.list, function(x) apply(x$test[,-1], 1, mean))
+  test.point.sd = lapply(df.list, function(x) apply(x$test[,-1], 1, sd))
   
   merge.mean.sd = function(mean, sd) {
-    res = data.frame(t(rbind(dose, mean, sd, sd/mean*100)))
+    res = data.frame(t(rbind(df.list[[1]]$ref[,1], mean, sd, round(sd/mean*100,0))))
     colnames(res) = c('Dose', 'Mean', 'SD', 'RSD, %')
     res
   }
@@ -115,11 +159,11 @@ point.stat.table = function(dose, df.list) {
   mapply(function(a,b) {list(ref=a, test=b)}, ref.points, test.points, SIMPLIFY=F)
 }
 
-board.data = function(rp, test, coef, cdif, rfu, ab) {
-  list.with.names=function(rp, test, coef, cdif, rfu, ab) {
-    list(rp = rp, test=test, coef = coef, cdif = cdif, rfu = rfu, ab=ab)
+board.data = function(rp, test, rcoef, coef, cdif, rfu, ab) {
+  list.with.names=function(rp, test, rcoef, coef, cdif, rfu, ab) {
+    list(rp = rp, test=test, rcoef = rcoef, coef = coef, cdif = cdif, rfu = rfu, ab=ab)
   }
-  mapply(list.with.names, rp, test, coef, cdif, rfu, ab, SIMPLIFY=F)
+  mapply(list.with.names, rp, test, rcoef, coef, cdif, rfu, ab, SIMPLIFY=F)
 }
 
 board.to.file = function(board, file) {
@@ -131,8 +175,11 @@ board.to.file = function(board, file) {
   cat('Test A/D\t')
   write.table(round(board$ab$test,2), dec = ",", sep='\t', col.names=F, row.names=F, quote=F)
   ###
-  cat('Slope, ref/test\t')
+  cat('\nSlope, ref/test\t')
   cat(round(board$coef$ref[1]/board$coef$test[1],2))
+  ###
+  cat('\nR-coefficient, ref', round(board$rcoef$ref,2), sep='\t')
+  cat('\nR-coefficient, test', round(board$rcoef$test,2), sep='\t')
   ###
   cat('\n\tTest result\n')
   write.table(data.frame(board$test), dec = ",", sep='\t', quote=F, col.names=F, row.names=T)
@@ -152,15 +199,14 @@ board.to.file = function(board, file) {
 }
 
 process = function(input.file, output.dir) {
-  dose = rev(c(100, 5, 2, 1, 0.5 , 0.25 , 0.1 , 0.05, 0.01, 0.0001))
   file = input.file
-  df.list = data.list.from.file(file, dose)
+  df.list = load.parsed(file)
   melt.df = lapply(df.list, melt.comparable.df)
   models = lapply(melt.df, drm.model)
   ##########################
   ## to board result data
   rp = lapply(lapply(lapply(melt.df, merged.model), SI, c(50,50), display=F), function(x) {
-      s = c(x[,1:2], x[,2]/x[,1]*100)
+      s = c(x[,1:2], round(x[,2]/x[,1]*100, 0))
       names(s) = c('Mean', 'SD', 'RSD, %')
       s
     }
@@ -168,21 +214,26 @@ process = function(input.file, output.dir) {
   f.test = lapply(models, f.parallel.test)
   eq.test = lapply(models, eq.parallel.test)
   models.for.plot = lapply(melt.df, merged.model)
-  rfu = point.stat.table(dose, df.list)
+  rfu = point.stat.table(df.list)
   test.result = mapply(function(a,b) {
     s = c(a, b)
-    names(s) = c('F-test','Equivalence test')
+    names(s) = c('F-test', 'Equivalence test')
     s
   }, f.test, eq.test, SIMPLIFY=F)
   coef = lapply(models, function(x) {
     s = lapply(lapply(x, summary), function(x) x$coefficients[,1:2])
-    s = lapply(s[1:2], function(x) cbind(x, RSD = x[,2]/x[,1]*100))
+    s = lapply(s[1:2], function(x) cbind(x, RSD = round(x[,2]/x[,1]*100,0)))
     s = lapply(s, function(z) {
       colnames(z) = c('Mean', 'SD', 'RSD, %')
       z
     })
   }
   )
+  rcoef = lapply(models.for.plot, function(model) {
+    df = cbind(model$data[,c(2,4)], predict(model))
+    colnames(df) = c('values','sample','predict')
+    rco(df)
+  })
   cdif = lapply(coef, function(x) {
     slope = round(abs(x$ref[1] - x$test[1])/mean(x$ref[1],x$test[1]), 2)*100
     lower = round(abs(x$ref[2] - x$test[2])/mean(x$ref[2],x$test[2]), 2)*100
@@ -199,7 +250,7 @@ process = function(input.file, output.dir) {
     s
   }
   )
-  db = board.data(rp, test.result, coef, cdif, rfu, ab)
+  db = board.data(rp, test.result, rcoef, coef, cdif, rfu, ab)
   
   ########
   # OUTPUT
@@ -248,6 +299,53 @@ ggplot.magic = function(model, name) {
           legend.title=element_text(size=25),
           legend.key.size=unit(2, "cm"))
     mp
+}
+
+ggplot.magic.box = function(model, name) {
+  points = model$origData
+  ref.points = model$origData[model$origData$sample == 'ref',c(1,3)]
+  test.points = model$origData[model$origData$sample == 'test',c(1,3)]
+  cf.ref = coef(model)[c(1,3,5,7)]
+  cf.test = coef(model)[c(2,4,6,8)]
+  LP.4 = function(x, B, D, A, C) D + (A-D)/(1+(x/C)^B)
+  LP.4mod <- function(x, ...) LP.4(10^x,... )  # to achieve propper plot
+  dose = unique(points$dose)
+  dddd = model$origData
+  dddd$dose = as.factor(dddd$dose)
+  mp = ggplot(NULL, aes(x=x)) + 
+#    scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
+#                  labels = trans_format("log10", math_format(10^.x)),
+#                  limits = c(0.0001, 1000)) +
+    labs (title=name, x='Log Dose, mug/ml', y='Response, RFU') +
+    stat_function(fun = LP.4mod,
+                  data = data.frame(x = dose, Sample = factor(1)),
+                  args = list(A = cf.ref[3], B = cf.ref[1], C = cf.ref[4], D = cf.ref[2]), 
+                  colour = "red") + # for ref curve
+    stat_function(fun = LP.4mod,
+                  data = data.frame(x = dose, Sample = factor(2)),
+                  args = list(A = cf.test[3], B = cf.test[1], C = cf.test[4], D = cf.test[2]), 
+                  colour = "deepskyblue3",
+                  linetype='dashed') + # for test curve
+    geom_boxplot(data = dddd, aes(x=dose, y=response, fill=sample)) + # ref boxes
+    theme(title = element_text(size=30),
+          axis.text.x = element_text(colour="grey20",size=20,hjust=.5,vjust=.5,face="plain"),
+          axis.text.y = element_text(colour="grey20",size=20,hjust=1,vjust=0,face="plain"),  
+          axis.title.x = element_text(colour="grey20",size=20,hjust=.5,vjust=0,face="plain"),
+          axis.title.y = element_text(colour="grey20",size=20,hjust=.5,vjust=.5,face="plain"),
+          legend.text=element_text(size=25),
+          legend.title=element_text(size=25),
+          legend.key.size=unit(2, "cm"))
+  mp
+}
+
+rco = function(df) {
+  nom.ref = sum((df$values[df$sample=='ref']-df$predict[df$sample=='ref'])^2)
+  denom.ref = sum((df$values[df$sample=='ref'] - mean(df$values[df$sample=='ref']))^2)
+  ref = sqrt(1 - nom.ref/denom.ref)
+  nom.test = sum((df$values[df$sample=='test'] - df$predict[df$sample=='test'])^2)
+  denom.test = sum((df$values[df$sample=='test'] - mean(df$values[df$sample=='test']))^2)
+  test = sqrt(1 - nom.test/denom.test)
+  list(ref=ref, test=test)
 }
 
 args <- commandArgs(trailingOnly = TRUE)
