@@ -4,7 +4,7 @@
 #' @param df - input data.frame in long format
 #' @return The object of class \code{drc}
 drm.single.model = function(df) {
-  mod.normal = LL.4(names=c("Slope","Lower Limit","Upper Limit", "ED50"))
+  mod.normal = LL.4(names=c("Slope, B","Lower Limit, D","Upper Limit, A", "ED50, C"))
   drm(response~dose, data = df, fct = mod.normal, na.action = na.omit)
 }
 
@@ -14,7 +14,7 @@ drm.single.model = function(df) {
 #' @return The object of class \code{drc}
 
 drm.comparable.model = function(df) {
-  mod.normal = LL.4(names=c("Slope","Lower Limit","Upper Limit", "ED50"))
+  mod.normal = LL.4(names=c("Slope, B","Lower Limit, D","Upper Limit, A", "ED50, C"))
   drm(response~dose, curveid = sample, data = df, fct = mod.normal, na.action = na.omit)
 }
 
@@ -37,7 +37,7 @@ f.parallel.test = function(ref.model, test.model, level=0.95) {
   initial = c(initial, initial[4])
   model = f.test.constrained.fit(response~dose, melt.df, sample, initial)
   coef = coef(model)
-  mod.shared = LL.4(fixed = c(coef[1], coef[2], coef[3], NA), names=c("Slope","Lower Limit","Upper Limit", "ED50"))
+  mod.shared = LL.4(fixed = c(coef[1], coef[2], coef[3], NA), names=c("Slope, B","Lower Limit, D","Upper Limit, A", "ED50, C"))
   constrained.ref.model = drm(response~dose, data = ref.model$origData, fct = mod.shared, na.action = na.omit)
   constrained.test.model = drm(response~dose, data = test.model$origData, fct = mod.shared, na.action = na.omit)
 
@@ -131,69 +131,6 @@ assayProcessor = function(ref.df, test.df) {
   list('Ref, RFU' = ref.raw.QC, 'Test, RFU' = test.raw.QC, 'Ref RAW'=ref.raw, 'Test RAW'=test.raw, 'Ref, model QC' = ref.QC, 'Test, model QC' = test.QC, 'Parallel test'=parallel, 'RP' = rp, 'Ref model' = ref.model, 'Test model' = test.model)
 }
 
-# Parse command line into separate arguments -----------------
-parse.cmd = function(input) {
-	## Default setting when no arguments passed
-	if(length(input) < 1) {
-		input = c("--help")
-	}
-
-	## Help section
-	if("--help" %in% input) {
-		cat("
-				The Bioassay Analysis Script (Alternative to PLA)
-
-				Arguments:
-				--ref=file    - reference file
-				--test=file   - test file
-        --out=dir     - output directory
-				--aov=val1,val2,...     - list of values to process AoV
-				--unpool=val1,val2,...  - list of values to unpool analysis by
-        --rb   - if specified, outliers would be removed from data
-				--help              - print this text
-
-				Example:
-				./bat.R --ref=ref.assay --test=test.assay --aov=Day,Plate --unpool=Plate --rb \n\n")
-
-		q(save="no")
-	}
-
-	## Parse arguments (we expect the form --arg=value)
-	parseArgs <- function(x) strsplit(sub("^--", "", x), "=")
-	argsDF = as.data.frame(do.call("rbind", parseArgs(input)))
-	argsL = as.list(as.character(argsDF$V2))
-	names(argsL) = argsDF$V1
-
-  if("--rb" %in% input) {
-    argsL$rb = T
-  } else {
-    argsL$rb = F
-  }
-	if(is.null(argsL$out)) {
-	  writeLines('No output directory provided, exit now')
-	  q(save="no")
-	}
-	if(is.null(argsL$ref)) {
-	  writeLines('No ref file provided, exit now')
-		q(save="no")
-	}
-	if(is.null(argsL$test)) {
-	  writeLines('No test file provided, exit now')
-		q(save="no")
-	}
-	if(is.null(argsL$aov)) {
-	  writeLines('No values to process AOV, will be scipped')
-	} else {
-		argsL$aov=unlist(strsplit(argsL$aov, ","))
-	}
-	if(is.null(argsL$unpool)) {
-	  writeLines('No values to unpool, pooled analysis will be processed')
-	} else {
-		argsL$unpool=unlist(strsplit(argsL$unpool, ","))
-	}
-	argsL
-}
-
 # Process unpooling by keys -----------
 unpool = function(ds, keys) {
 	for(key in keys) {
@@ -246,21 +183,4 @@ result.to.file = function(result, dir, name) {
   plot(model.boxplot.ggplot(result$'Ref model', result$'Test model'))
   ggsave(file.path(dir, paste(name, '_boxes.png', sep="")))
   T
-}
-
-exec = function(args) {
-  ref.df = read.table(args$ref, sep="\t", header=T, check.names = F)
-  ref.df[ref.df$response<0, 'response'] = NA
-  test.df = read.table(args$test, sep="\t", header=T, check.names = F)
-  test.df[test.df$response<0, 'response'] = NA
-  # Unpool data by factor levels -------------
-  ref.df = unpool(ref.df, args$unpool)
-  test.df = unpool(test.df, args$unpool)
-  # Process analysis -------------------------
-  result = mapply(assayProcessor, ref.df, test.df, SIMPLIFY=F)
-
-  rt = lapply(names(result), function(name) {
-    result.to.file(result[[name]], args$out, name)
-  })
-  rt
 }
