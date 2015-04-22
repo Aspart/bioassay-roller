@@ -20,6 +20,9 @@ ConfigurationValidator <- function(args) {
   }
   if(is.null(args$out)) {
     args$out=file.path(args$input, "results")
+    if (!file.exists(args$out)) {
+      dir.create(args$out)
+    }
     warning('Output directory not specified, using default')
   }
   if(!is.null(args$aov)) {
